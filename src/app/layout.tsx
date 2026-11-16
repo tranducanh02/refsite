@@ -1,10 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import "@fontsource-variable/dm-sans";
-import "@fontsource-variable/source-serif-4";
-import "@fontsource-variable/source-serif-4/wght-italic.css";
-import "@fontsource/ibm-plex-mono/400.css";
-import "@fontsource/ibm-plex-mono/500.css";
-import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,8 +12,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f2f8f7",
-  colorScheme: "light",
+  themeColor: "#0e0e0e",
+  colorScheme: "dark",
 };
 export default function RootLayout({
   children,

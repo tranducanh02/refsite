@@ -1,6 +1,6 @@
 # RefSite
 
-Thư viện resource cá nhân cho design và development. Giao diện light theo `DESIGN (userinterview).md`: canvas Paper White `#f2f8f7`, card mint `#e4f0f1`, panel blush `#f2e8e2`, CTA Deep Teal `#1c5d5f` và secondary Navy `#16325a`. Font tự host: DM Sans thay Sofia Pro, Source Serif 4 thay P22 Mackinac Pro theo các lựa chọn trong tài liệu; IBM Plex Mono cho nhãn mục/tag uppercase. Card bo 12px, nút pill 48px, không đổ bóng, minh hoạ SVG nét mực với teal/rose. Resource hiển thị lưới hai cột trên desktop hoặc danh sách thu gọn, một cột trên mobile; ảnh resource gốc được giữ nguyên. Vùng nội dung tối đa 1200px; khoảng cách được điều chỉnh cho ứng dụng thư viện.
+Thư viện resource cá nhân cho design và development. Giao diện dark theo `DESIGN (4).md` (LaunchDarkly): canvas Midnight Ink `#0e0e0e`, panel Carbon `#191919`, chữ trắng/Fog, CTA Voltage Blue `#405bff` và điểm nhấn Signal Violet `#7084ff`. Font tự host Geist và Geist Mono là các lựa chọn thay thế trong tài liệu; tiêu đề weight 500, nhãn kỹ thuật dùng mono. Thanh điều hướng nổi bo 60px, card/nút/tag bo 30px, input bo 10px, viền white-alpha và glow violet nhẹ. Bỏ minh hoạ pastel của theme trước; ảnh resource gốc được giữ nguyên, bìa mặc định là panel sáng. Lưới ba cột trên màn hình rộng, hai cột trên desktop nhỏ, một cột trên mobile và chế độ danh sách thu gọn. Vùng nội dung tối đa 1200px; khoảng cách được điều chỉnh cho ứng dụng thư viện.
 
 ## Chạy local
 

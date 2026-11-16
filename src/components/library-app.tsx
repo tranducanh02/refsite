@@ -62,7 +62,6 @@ import {
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { Modal } from "./modal";
 import { ResourceForm } from "./resource-form";
-import { LibraryIllustration } from "./library-illustration";
 
 type ActiveModal =
   | null
@@ -614,7 +613,6 @@ export function LibraryApp() {
                 <p>Mọi nguồn cảm hứng, trong một không gian.</p>
               </div>
             </div>
-            <LibraryIllustration />
             <div className="overview-stats">
               <div>
                 <strong>
