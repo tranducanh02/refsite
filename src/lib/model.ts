@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { postInputSchema, postSchema } from "./blog";
 
 export const UNCATEGORY = "uncategory";
 const id = z
@@ -34,6 +35,7 @@ export const librarySchema = z.object({
   revision: z.number().int().min(0),
   folders: z.array(folderSchema).max(500),
   resources: z.array(resourceSchema).max(10000),
+  posts: z.array(postSchema).max(2000).default([]),
 });
 export type Folder = z.infer<typeof folderSchema>;
 export type Resource = z.infer<typeof resourceSchema>;
@@ -41,6 +43,14 @@ export type Library = z.infer<typeof librarySchema>;
 export type ResourceInput = Omit<Resource, "id" | "createdAt" | "updatedAt">;
 
 export const actionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("save-post"),
+    id,
+    baseVersion: z.number().int().min(0).nullable(),
+    post: postInputSchema,
+  }),
+  z.object({ type: z.literal("trash-post"), id }),
+  z.object({ type: z.literal("restore-post"), id }),
   z.object({
     type: z.literal("save-resource"),
     id: id.optional(),
@@ -74,6 +84,7 @@ export function emptyLibrary(): Library {
     version: 1,
     revision: 0,
     resources: [],
+    posts: [],
     folders: [
       { id: UNCATEGORY, name: "Uncategory", parentId: null, order: 0 },
       { id: "product", name: "Product Design", parentId: null, order: 1 },
@@ -172,6 +183,7 @@ export function validateLibrary(value: unknown): Library {
   const library = librarySchema.parse(value);
   const folderIds = new Set(library.folders.map((f) => f.id));
   if (
+    new Set(library.posts.map((p) => p.id)).size !== library.posts.length ||
     folderIds.size !== library.folders.length ||
     new Set(library.resources.map((r) => r.id)).size !==
       library.resources.length
@@ -270,6 +282,36 @@ export function applyAction(
 ): Library {
   const library = structuredClone(current);
   switch (action.type) {
+    case "save-post": {
+      const old = library.posts.find((p) => p.id === action.id);
+      if ((old?.editVersion ?? null) !== action.baseVersion || old?.deletedAt)
+        throw new Error(
+          "Bài viết đã thay đổi hoặc bị xoá ở nơi khác. Xuất bản đang sửa rồi mở lại bài mới nhất.",
+        );
+      const post = postInputSchema.parse(action.post);
+      const item = {
+        ...post,
+        tags: [...new Set(post.tags)],
+        id: action.id,
+        editVersion: (old?.editVersion ?? -1) + 1,
+        createdAt: old?.createdAt ?? now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+      library.posts = old
+        ? library.posts.map((p) => (p.id === old.id ? item : p))
+        : [item, ...library.posts];
+      break;
+    }
+    case "trash-post":
+    case "restore-post": {
+      const post = library.posts.find((p) => p.id === action.id);
+      if (!post) throw new Error("Bài viết không còn tồn tại.");
+      post.deletedAt = action.type === "trash-post" ? now : null;
+      post.updatedAt = now;
+      post.editVersion += 1;
+      break;
+    }
     case "save-resource": {
       if (!library.folders.some((f) => f.id === action.resource.folderId))
         throw new Error("Thư mục không tồn tại.");
@@ -384,6 +426,10 @@ export function applyAction(
     }
     case "import": {
       const incoming = validateLibrary(action.library);
+      const postIds = new Set(library.posts.map((p) => p.id));
+      for (const post of incoming.posts) {
+        if (!postIds.has(post.id)) library.posts.push(post);
+      }
       // Merge folders by path and resources by URL. Existing user edits always win.
       const map = new Map<string, string>([[UNCATEGORY, UNCATEGORY]]);
       const pending = incoming.folders.filter((f) => f.id !== UNCATEGORY);

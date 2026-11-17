@@ -62,6 +62,7 @@ import {
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { Modal } from "./modal";
 import { ResourceForm } from "./resource-form";
+import { BlogView } from "./blog-view";
 
 type ActiveModal =
   | null
@@ -75,6 +76,7 @@ const viewNames: Record<string, string> = {
   all: "All resources",
   favorites: "Favorites",
   uncategory: "Uncategory",
+  blog: "Blog",
 };
 
 function Brand() {
@@ -131,6 +133,7 @@ export function LibraryApp() {
   const [email, setEmail] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [view, setView] = useState("all");
+  const blogLeaveGuard = useRef<(() => Promise<boolean>) | null>(null);
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const [sort, setSort] = useState("newest");
@@ -164,7 +167,7 @@ export function LibraryApp() {
       const response = await fetch("/api/library", { cache: "no-store" });
       const data = await response.json();
       if (response.status === 401) {
-        setStatus("login");
+        if (!blogLeaveGuard.current) setStatus("login");
         return;
       }
       if (!response.ok) throw new Error(data.error);
@@ -221,7 +224,7 @@ export function LibraryApp() {
   }, [modal, status]);
   useEffect(() => {
     if (
-      !["all", "favorites"].includes(view) &&
+      !["all", "favorites", "blog"].includes(view) &&
       !library.folders.some((f) => f.id === view)
     )
       setView(UNCATEGORY);
@@ -242,22 +245,24 @@ export function LibraryApp() {
         busyRef.current = false;
         await load(true);
       }
-      if (response.status === 401) setStatus("login");
+      if (response.status === 401 && !blogLeaveGuard.current)
+        setStatus("login");
       if (!response.ok) throw new Error(data.error);
       const next = validateLibrary(data.library);
       libraryRef.current = next;
       setLibrary(next);
-      notify(
-        action.type === "delete-folder"
-          ? "Đã xoá thư mục. Các link được chuyển về Uncategory."
-          : action.type === "delete-resource"
-            ? "Đã xoá resource."
-            : action.type === "import"
-              ? "Đã nhập dữ liệu và bỏ qua các link trùng."
-              : action.type === "load-samples"
-                ? "Đã thêm 8 resource mẫu vào thư viện."
-                : "Đã lưu vào thư viện.",
-      );
+      if (!action.type.endsWith("post"))
+        notify(
+          action.type === "delete-folder"
+            ? "Đã xoá thư mục. Các link được chuyển về Uncategory."
+            : action.type === "delete-resource"
+              ? "Đã xoá resource."
+              : action.type === "import"
+                ? "Đã nhập dữ liệu và bỏ qua các link trùng."
+                : action.type === "load-samples"
+                  ? "Đã thêm 8 resource mẫu vào thư viện."
+                  : "Đã lưu vào thư viện.",
+        );
       return true;
     } catch (err) {
       notify(
@@ -272,7 +277,14 @@ export function LibraryApp() {
       setBusy(false);
     }
   }
-  function selectView(next: string) {
+  async function selectView(next: string) {
+    if (
+      view === "blog" &&
+      next !== "blog" &&
+      blogLeaveGuard.current &&
+      !(await blogLeaveGuard.current())
+    )
+      return;
     setView(next);
     setTag("");
     setMobileNav(false);
@@ -313,6 +325,7 @@ export function LibraryApp() {
     if (importRef.current) importRef.current.value = "";
   }
   async function signOut() {
+    if (blogLeaveGuard.current && !(await blogLeaveGuard.current())) return;
     await supabaseBrowser().auth.signOut();
     libraryRef.current = emptyLibrary();
     setLibrary(emptyLibrary());
@@ -404,13 +417,21 @@ export function LibraryApp() {
   const sidebar = (
     <>
       <Brand />
-      <div className="workspace-label">
-        <span className="workspace-avatar">M</span>
+      <button
+        className={`workspace-label blog-nav ${view === "blog" ? "active" : ""}`}
+        onClick={() => void selectView("blog")}
+        aria-current={view === "blog" ? "page" : undefined}
+      >
+        <span className="workspace-avatar">
+          <BookOpen size={19} />
+        </span>
         <div>
-          My workspace<small>Không gian của riêng bạn</small>
+          Blog<small>Ghi chép kiến thức của bạn</small>
         </div>
-        <span className="private-badge">PRIVATE</span>
-      </div>
+        <span className="private-badge">
+          {library.posts.filter((p) => !p.deletedAt).length}
+        </span>
+      </button>
       <nav aria-label="Thư viện">
         <p className="nav-caption">LIBRARY</p>
         <button
@@ -572,282 +593,305 @@ export function LibraryApp() {
           </button>
         </header>
         <div className="content-container">
-          <div className="page-heading">
-            <div>
-              <div className="eyebrow">
-                <span />
-                YOUR PERSONAL LIBRARY
-              </div>
-              <h1>
-                {title}
-                <span className="heading-period">.</span>
-              </h1>
-              <p>
-                {view === UNCATEGORY
-                  ? "Cứ lưu trước. Phân loại khi bạn có thời gian."
-                  : view === "favorites"
-                    ? "Những resource bạn luôn muốn giữ ở gần."
-                    : currentFolder
-                      ? "Một góc cảm hứng, dành riêng cho công việc của bạn."
-                      : "Những điều hay cho lần sáng tạo tiếp theo."}
-              </p>
-            </div>
-            <button
-              className="button primary add-resource"
-              onClick={() => setModal({ type: "resource" })}
-            >
-              <Plus size={19} />
-              Thêm resource
-              <ArrowRight size={17} />
-            </button>
-          </div>
-          <div className="library-overview">
-            <div className="overview-title">
-              <span className="overview-icon">
-                <BookOpen size={21} />
-              </span>
-              <div>
-                <strong>
-                  Collect thoughtfully. <em>Create freely.</em>
-                </strong>
-                <p>Mọi nguồn cảm hứng, trong một không gian.</p>
-              </div>
-            </div>
-            <div className="overview-stats">
-              <div>
-                <strong>
-                  {library.resources.length.toString().padStart(2, "0")}
-                </strong>
-                <span>RESOURCES</span>
-              </div>
-              <span className="stat-divider" />
-              <div>
-                <strong>
-                  {library.folders
-                    .filter((f) => f.parentId === null && f.id !== UNCATEGORY)
-                    .length.toString()
-                    .padStart(2, "0")}
-                </strong>
-                <span>COLLECTIONS</span>
-              </div>
-              <div className="overview-decoration">
-                <Layers3 size={78} strokeWidth={0.6} />
-              </div>
-            </div>
-          </div>
-          <div className="resource-toolbar">
-            <div className="toolbar-left">
-              <span className="resource-count">
-                {resources.length} <span>resource</span>
-              </span>
-              {currentFolder && currentFolder.id !== UNCATEGORY && (
+          {view === "blog" ? (
+            <BlogView
+              posts={library.posts}
+              onSave={mutate}
+              guard={blogLeaveGuard}
+              busy={busy}
+            />
+          ) : (
+            <>
+              <div className="page-heading">
+                <div>
+                  <div className="eyebrow">
+                    <span />
+                    YOUR PERSONAL LIBRARY
+                  </div>
+                  <h1>
+                    {title}
+                    <span className="heading-period">.</span>
+                  </h1>
+                  <p>
+                    {view === UNCATEGORY
+                      ? "Cứ lưu trước. Phân loại khi bạn có thời gian."
+                      : view === "favorites"
+                        ? "Những resource bạn luôn muốn giữ ở gần."
+                        : currentFolder
+                          ? "Một góc cảm hứng, dành riêng cho công việc của bạn."
+                          : "Những điều hay cho lần sáng tạo tiếp theo."}
+                  </p>
+                </div>
                 <button
-                  className="icon-button"
-                  aria-label={`Chỉnh sửa ${currentFolder.name}`}
-                  title="Chỉnh sửa thư mục"
-                  onClick={() =>
-                    setModal({ type: "folder", folder: currentFolder })
-                  }
+                  className="button primary add-resource"
+                  onClick={() => setModal({ type: "resource" })}
                 >
-                  <MoreHorizontal size={19} />
-                </button>
-              )}
-              <select
-                aria-label="Lọc theo tag"
-                className="filter-select"
-                value={tag}
-                onChange={(e) => setTag(e.target.value)}
-              >
-                <option value="">Tất cả tag</option>
-                {tags.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="toolbar-right">
-              <select
-                className="sort-select"
-                aria-label="Sắp xếp resource"
-                value={sort}
-                onChange={(e) => setSort(e.target.value)}
-              >
-                <option value="newest">Mới nhất</option>
-                <option value="oldest">Cũ nhất</option>
-                <option value="name">Tên A–Z</option>
-              </select>
-              <div
-                className="view-toggle"
-                role="group"
-                aria-label="Kiểu hiển thị"
-              >
-                <button
-                  className={layout === "grid" ? "selected" : ""}
-                  aria-label="Dạng lưới"
-                  aria-pressed={layout === "grid"}
-                  onClick={() => switchLayout("grid")}
-                >
-                  <Grid2X2 size={17} />
-                </button>
-                <button
-                  className={layout === "list" ? "selected" : ""}
-                  aria-label="Dạng danh sách"
-                  aria-pressed={layout === "list"}
-                  onClick={() => switchLayout("list")}
-                >
-                  <List size={19} />
+                  <Plus size={19} />
+                  Thêm resource
+                  <ArrowRight size={17} />
                 </button>
               </div>
-            </div>
-          </div>
-          {resources.length > 0 ? (
-            <div
-              className={`resource-grid ${layout === "list" ? "list-layout" : ""}`}
-            >
-              {resources.map((resource) => (
-                <article className="resource-card" key={resource.id}>
-                  <a
-                    className="card-cover-link"
-                    href={resource.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Mở ${resource.title}`}
+              <div className="library-overview">
+                <div className="overview-title">
+                  <span className="overview-icon">
+                    <BookOpen size={21} />
+                  </span>
+                  <div>
+                    <strong>
+                      Collect thoughtfully. <em>Create freely.</em>
+                    </strong>
+                    <p>Mọi nguồn cảm hứng, trong một không gian.</p>
+                  </div>
+                </div>
+                <div className="overview-stats">
+                  <div>
+                    <strong>
+                      {library.resources.length.toString().padStart(2, "0")}
+                    </strong>
+                    <span>RESOURCES</span>
+                  </div>
+                  <span className="stat-divider" />
+                  <div>
+                    <strong>
+                      {library.folders
+                        .filter(
+                          (f) => f.parentId === null && f.id !== UNCATEGORY,
+                        )
+                        .length.toString()
+                        .padStart(2, "0")}
+                    </strong>
+                    <span>COLLECTIONS</span>
+                  </div>
+                  <div className="overview-decoration">
+                    <Layers3 size={78} strokeWidth={0.6} />
+                  </div>
+                </div>
+              </div>
+              <div className="resource-toolbar">
+                <div className="toolbar-left">
+                  <span className="resource-count">
+                    {resources.length} <span>resource</span>
+                  </span>
+                  {currentFolder && currentFolder.id !== UNCATEGORY && (
+                    <button
+                      className="icon-button"
+                      aria-label={`Chỉnh sửa ${currentFolder.name}`}
+                      title="Chỉnh sửa thư mục"
+                      onClick={() =>
+                        setModal({ type: "folder", folder: currentFolder })
+                      }
+                    >
+                      <MoreHorizontal size={19} />
+                    </button>
+                  )}
+                  <select
+                    aria-label="Lọc theo tag"
+                    className="filter-select"
+                    value={tag}
+                    onChange={(e) => setTag(e.target.value)}
                   >
-                    <ResourceCover resource={resource} />
-                  </a>
-                  <div className="card-body">
-                    <div className="card-title-row">
+                    <option value="">Tất cả tag</option>
+                    {tags.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="toolbar-right">
+                  <select
+                    className="sort-select"
+                    aria-label="Sắp xếp resource"
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value)}
+                  >
+                    <option value="newest">Mới nhất</option>
+                    <option value="oldest">Cũ nhất</option>
+                    <option value="name">Tên A–Z</option>
+                  </select>
+                  <div
+                    className="view-toggle"
+                    role="group"
+                    aria-label="Kiểu hiển thị"
+                  >
+                    <button
+                      className={layout === "grid" ? "selected" : ""}
+                      aria-label="Dạng lưới"
+                      aria-pressed={layout === "grid"}
+                      onClick={() => switchLayout("grid")}
+                    >
+                      <Grid2X2 size={17} />
+                    </button>
+                    <button
+                      className={layout === "list" ? "selected" : ""}
+                      aria-label="Dạng danh sách"
+                      aria-pressed={layout === "list"}
+                      onClick={() => switchLayout("list")}
+                    >
+                      <List size={19} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {resources.length > 0 ? (
+                <div
+                  className={`resource-grid ${layout === "list" ? "list-layout" : ""}`}
+                >
+                  {resources.map((resource) => (
+                    <article className="resource-card" key={resource.id}>
                       <a
+                        className="card-cover-link"
                         href={resource.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="card-title"
+                        aria-label={`Mở ${resource.title}`}
                       >
-                        {resource.title}
+                        <ResourceCover resource={resource} />
                       </a>
-                      <button
-                        className={`icon-button favorite-button ${resource.favorite ? "is-favorite" : ""}`}
-                        aria-label={`${resource.favorite ? "Bỏ yêu thích" : "Yêu thích"} ${resource.title}`}
-                        aria-pressed={resource.favorite}
-                        disabled={busy}
-                        onClick={() =>
-                          void mutate({
-                            type: "favorite",
-                            id: resource.id,
-                            favorite: !resource.favorite,
-                          })
-                        }
-                      >
-                        <Star
-                          size={17}
-                          fill={resource.favorite ? "currentColor" : "none"}
-                        />
-                      </button>
-                    </div>
-                    <p className="card-description">
-                      {resource.description ||
-                        "Một resource đang chờ bạn khám phá."}
-                    </p>
-                    <div className="card-tags">
-                      {resource.tags.slice(0, 3).map((t) => (
-                        <button key={t} onClick={() => setTag(t)}>
-                          {t}
-                        </button>
-                      ))}
-                      {resource.tags.length > 3 && (
-                        <span>+{resource.tags.length - 3}</span>
-                      )}
-                    </div>
-                    <div className="card-footer">
-                      <span className="card-domain">
-                        <span>{domainOf(resource.url)[0].toUpperCase()}</span>
-                        {domainOf(resource.url)}
-                      </span>
-                      <button
-                        className="icon-button"
-                        aria-label={`Chỉnh sửa ${resource.title}`}
-                        onClick={() => setModal({ type: "resource", resource })}
-                      >
-                        <MoreHorizontal size={19} />
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-library">
-              <div className="empty-art" aria-hidden="true">
-                <BookOpen size={32} strokeWidth={1.5} />
-              </div>
-              <span className="empty-eyebrow">A SPACE FOR YOUR NEXT IDEA</span>
-              <h2>
-                {tag
-                  ? "Chưa có resource với tag này"
-                  : view === "favorites"
-                    ? "Giữ những điều bạn yêu thích"
-                    : "Bắt đầu từ một link hay."}
-              </h2>
-              <p>
-                {tag
-                  ? "Thử bỏ bộ lọc hoặc chọn một tag khác."
-                  : view === "favorites"
-                    ? "Nhấn ngôi sao trên resource để tìm lại chúng ở đây."
-                    : "Website đẹp, font chữ mới, một công cụ hữu ích.\nLưu lại để cảm hứng luôn trong tầm tay."}
-              </p>
-              {tag ? (
-                <button className="button secondary" onClick={() => setTag("")}>
-                  Bỏ bộ lọc
-                </button>
-              ) : view === "favorites" ? (
-                <button
-                  className="button secondary"
-                  onClick={() => selectView("all")}
-                >
-                  Khám phá thư viện <ArrowRight size={16} />
-                </button>
+                      <div className="card-body">
+                        <div className="card-title-row">
+                          <a
+                            href={resource.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="card-title"
+                          >
+                            {resource.title}
+                          </a>
+                          <button
+                            className={`icon-button favorite-button ${resource.favorite ? "is-favorite" : ""}`}
+                            aria-label={`${resource.favorite ? "Bỏ yêu thích" : "Yêu thích"} ${resource.title}`}
+                            aria-pressed={resource.favorite}
+                            disabled={busy}
+                            onClick={() =>
+                              void mutate({
+                                type: "favorite",
+                                id: resource.id,
+                                favorite: !resource.favorite,
+                              })
+                            }
+                          >
+                            <Star
+                              size={17}
+                              fill={resource.favorite ? "currentColor" : "none"}
+                            />
+                          </button>
+                        </div>
+                        <p className="card-description">
+                          {resource.description ||
+                            "Một resource đang chờ bạn khám phá."}
+                        </p>
+                        <div className="card-tags">
+                          {resource.tags.slice(0, 3).map((t) => (
+                            <button key={t} onClick={() => setTag(t)}>
+                              {t}
+                            </button>
+                          ))}
+                          {resource.tags.length > 3 && (
+                            <span>+{resource.tags.length - 3}</span>
+                          )}
+                        </div>
+                        <div className="card-footer">
+                          <span className="card-domain">
+                            <span>
+                              {domainOf(resource.url)[0].toUpperCase()}
+                            </span>
+                            {domainOf(resource.url)}
+                          </span>
+                          <button
+                            className="icon-button"
+                            aria-label={`Chỉnh sửa ${resource.title}`}
+                            onClick={() =>
+                              setModal({ type: "resource", resource })
+                            }
+                          >
+                            <MoreHorizontal size={19} />
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
               ) : (
-                <button
-                  className="button secondary"
-                  onClick={() => setModal({ type: "resource" })}
-                >
-                  <Plus size={18} />
-                  Thêm resource đầu tiên
-                </button>
-              )}
-              {!library.resources.length && (
-                <button
-                  className="sample-button"
-                  disabled={busy}
-                  onClick={() => void mutate({ type: "load-samples" })}
-                >
-                  {busy ? (
-                    <LoaderCircle size={15} className="spin" />
+                <div className="empty-library">
+                  <div className="empty-art" aria-hidden="true">
+                    <BookOpen size={32} strokeWidth={1.5} />
+                  </div>
+                  <span className="empty-eyebrow">
+                    A SPACE FOR YOUR NEXT IDEA
+                  </span>
+                  <h2>
+                    {tag
+                      ? "Chưa có resource với tag này"
+                      : view === "favorites"
+                        ? "Giữ những điều bạn yêu thích"
+                        : "Bắt đầu từ một link hay."}
+                  </h2>
+                  <p>
+                    {tag
+                      ? "Thử bỏ bộ lọc hoặc chọn một tag khác."
+                      : view === "favorites"
+                        ? "Nhấn ngôi sao trên resource để tìm lại chúng ở đây."
+                        : "Website đẹp, font chữ mới, một công cụ hữu ích.\nLưu lại để cảm hứng luôn trong tầm tay."}
+                  </p>
+                  {tag ? (
+                    <button
+                      className="button secondary"
+                      onClick={() => setTag("")}
+                    >
+                      Bỏ bộ lọc
+                    </button>
+                  ) : view === "favorites" ? (
+                    <button
+                      className="button secondary"
+                      onClick={() => selectView("all")}
+                    >
+                      Khám phá thư viện <ArrowRight size={16} />
+                    </button>
                   ) : (
-                    <Sparkles size={15} />
+                    <button
+                      className="button secondary"
+                      onClick={() => setModal({ type: "resource" })}
+                    >
+                      <Plus size={18} />
+                      Thêm resource đầu tiên
+                    </button>
                   )}
-                  Hoặc khám phá với 8 resource mẫu <ArrowRight size={14} />
-                </button>
+                  {!library.resources.length && (
+                    <button
+                      className="sample-button"
+                      disabled={busy}
+                      onClick={() => void mutate({ type: "load-samples" })}
+                    >
+                      {busy ? (
+                        <LoaderCircle size={15} className="spin" />
+                      ) : (
+                        <Sparkles size={15} />
+                      )}
+                      Hoặc khám phá với 8 resource mẫu <ArrowRight size={14} />
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
+              <footer className="library-footer">
+                <span>
+                  <span className="connection-dot" />
+                  {mode === "local"
+                    ? "Đã lưu trên máy của bạn"
+                    : "Đồng bộ với Supabase"}
+                </span>
+                <span>
+                  Made for your creative flow{" "}
+                  <span className="footer-star">✳</span>
+                </span>
+              </footer>
+            </>
           )}
-          <footer className="library-footer">
-            <span>
-              <span className="connection-dot" />
-              {mode === "local"
-                ? "Đã lưu trên máy của bạn"
-                : "Đồng bộ với Supabase"}
-            </span>
-            <span>
-              Made for your creative flow <span className="footer-star">✳</span>
-            </span>
-          </footer>
         </div>
       </main>
       {mobileNav && (
         <Modal
-          title="My workspace"
+          title="Không gian của bạn"
           className="nav-modal"
           onClose={() => setMobileNav(false)}
         >
@@ -1001,7 +1045,8 @@ export function LibraryApp() {
               <div className="import-confirm">
                 <p>
                   Nhập {pendingImport.resources.length} resource và{" "}
-                  {pendingImport.folders.length} thư mục? Các resource đang có
+                  {pendingImport.folders.length} thư mục và{" "}
+                  {pendingImport.posts.length} bài viết? Các nội dung đang có
                   được giữ nguyên.
                 </p>
                 <button
