@@ -185,6 +185,10 @@ async function run(directory: string) {
     console.log(
       "PASS: production API — create, image persistence, edit, stale saves, trash, restore, import, same-origin protection, page response.",
     );
+    if (process.env.REFSITE_TEST_BROWSER === "1") {
+      const { runBlogEditorChecks } = await import("./blog-editor.browser");
+      await runBlogEditorChecks(origin);
+    }
   } finally {
     server.kill();
     await exited;

@@ -3,11 +3,15 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type MutableRefObject,
-  type KeyboardEvent,
 } from "react";
+import type { Editor } from "@tiptap/core";
+import { EditorHistory } from "@/lib/editor-history";
+import { InlineText, RichBlockText } from "./blog-rich-text";
+import { compactInline, reorderBlocks, sliceInline } from "@/lib/blog-editor";
 import {
   ArrowLeft,
   ArrowDown,
@@ -16,10 +20,13 @@ import {
   Check,
   Download,
   ImagePlus,
+  GripVertical,
   LoaderCircle,
   Pencil,
   Plus,
   RotateCcw,
+  Undo2,
+  Redo2,
   Search,
   Trash2,
   X,
@@ -113,15 +120,27 @@ function ReadBlocks({ blocks }: { blocks: BlogBlock[] }) {
           case "h1":
             return (
               <h2 {...props} className="blog-h1">
-                {block.text}
+                <InlineText block={block} />
               </h2>
             );
           case "h2":
-            return <h2 {...props}>{block.text}</h2>;
+            return (
+              <h2 {...props}>
+                <InlineText block={block} />
+              </h2>
+            );
           case "h3":
-            return <h3 {...props}>{block.text}</h3>;
+            return (
+              <h3 {...props}>
+                <InlineText block={block} />
+              </h3>
+            );
           case "h4":
-            return <h4 {...props}>{block.text}</h4>;
+            return (
+              <h4 {...props}>
+                <InlineText block={block} />
+              </h4>
+            );
           case "image":
             return (
               <figure {...props}>
@@ -136,7 +155,11 @@ function ReadBlocks({ blocks }: { blocks: BlogBlock[] }) {
           case "divider":
             return <hr {...props} />;
           case "quote":
-            return <blockquote {...props}>{block.text}</blockquote>;
+            return (
+              <blockquote {...props}>
+                <InlineText block={block} />
+              </blockquote>
+            );
           case "code":
             return (
               <pre {...props}>
@@ -147,14 +170,18 @@ function ReadBlocks({ blocks }: { blocks: BlogBlock[] }) {
             return (
               <div {...props} className="blog-list-line">
                 <span>•</span>
-                <p>{block.text}</p>
+                <p>
+                  <InlineText block={block} />
+                </p>
               </div>
             );
           case "number":
             return (
               <div {...props} className="blog-list-line">
                 <span>{number}.</span>
-                <p>{block.text}</p>
+                <p>
+                  <InlineText block={block} />
+                </p>
               </div>
             );
           case "check":
@@ -170,55 +197,72 @@ function ReadBlocks({ blocks }: { blocks: BlogBlock[] }) {
                   readOnly
                   tabIndex={-1}
                 />
-                <p>{block.text}</p>
+                <p>
+                  <InlineText block={block} />
+                </p>
               </div>
             );
           default:
-            return <p {...props}>{block.text || "\u00a0"}</p>;
+            return (
+              <p {...props}>
+                <InlineText block={block} />
+              </p>
+            );
         }
       })}
     </div>
   );
 }
 
-function BlockText({
-  block,
+function BlogTitle({
+  value,
   onChange,
-  onKeyDown,
-  onFocus,
 }: {
-  block: BlogBlock;
-  onChange: (text: string) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onFocus: () => void;
+  value: string;
+  onChange: (value: string) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const resize = useCallback(() => {
+    if (!ref.current) return;
+    ref.current.style.height = "0px";
+    ref.current.style.height = `${ref.current.scrollHeight}px`;
+  }, []);
+  useLayoutEffect(resize, [value, resize]);
   useEffect(() => {
-    if (ref.current) {
-      ref.current.style.height = "0px";
-      ref.current.style.height = `${ref.current.scrollHeight}px`;
-    }
-  }, [block.text, block.type]);
+    const field = ref.current;
+    if (!field) return;
+    let width = field.clientWidth;
+    let mounted = true;
+    const observer = new ResizeObserver(() => {
+      if (field.clientWidth !== width) {
+        width = field.clientWidth;
+        resize();
+      }
+    });
+    observer.observe(field);
+    void document.fonts.ready.then(() => {
+      if (mounted) resize();
+    });
+    return () => {
+      mounted = false;
+      observer.disconnect();
+    };
+  }, [resize]);
   return (
     <textarea
       ref={ref}
-      data-block-id={block.id}
       rows={1}
-      className={`blog-block-input block-${block.type}`}
-      aria-label={`${commands.find((c) => c.type === block.type)?.label} — nội dung`}
-      placeholder={
-        block.type === "paragraph"
-          ? "Viết điều bạn muốn nhớ, hoặc gõ /…"
-          : commands.find((c) => c.type === block.type)?.hint
-      }
-      maxLength={100_000}
-      value={block.text}
-      onFocus={onFocus}
-      onChange={(e) => onChange(e.target.value)}
-      onKeyDown={onKeyDown}
+      className="blog-title-input"
+      aria-label="Tiêu đề bài viết"
+      placeholder="Chưa đặt tiêu đề"
+      value={value}
+      maxLength={200}
+      onChange={(event) => onChange(event.target.value)}
     />
   );
 }
+
+type EditorSnapshot = { draft: PostInput; tagText: string };
 
 function PostEditor({
   post,
@@ -252,30 +296,106 @@ function PostEditor({
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
   const [tagText, setTagText] = useState(post.tags.join(", "));
+  const tagTextRef = useRef(tagText);
+  const history = useRef(new EditorHistory<EditorSnapshot>());
   const [menu, setMenu] = useState<{
     id: string;
     query: string;
     index: number;
+    source?: "slash" | "block";
   } | null>(null);
   const imageTarget = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
   const [active, setActive] = useState(draft.blocks[0]?.id);
+  const editors = useRef(new Map<string, Editor>());
+  const pendingFocus = useRef<{ id: string; position: number } | null>(null);
+  const dragging = useRef<string | null>(null);
+  const dragEndedAt = useRef(0);
+  const [dragged, setDragged] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    id: string;
+    edge: "before" | "after";
+  } | null>(null);
 
-  function update(next: PostInput) {
+  function applyDraft(next: PostInput, tags = tagTextRef.current) {
     draftRef.current = next;
+    tagTextRef.current = tags;
+    setTagText(tags);
     setDraft(next);
     setSaveStatus("Chưa lưu");
     setSaveError("");
   }
-  function updateBlock(id: string, changes: Partial<BlogBlock>) {
-    update({
-      ...draftRef.current,
-      blocks: draftRef.current.blocks.map((b) =>
-        b.id === id ? { ...b, ...changes } : b,
-      ),
+  function update(next: PostInput, group?: string, tags = tagTextRef.current) {
+    const current = draftRef.current;
+    if (
+      next.title === current.title &&
+      next.tags === current.tags &&
+      next.blocks === current.blocks &&
+      tags === tagTextRef.current
+    )
+      return;
+    history.current.record(
+      { draft: current, tagText: tagTextRef.current },
+      group,
+    );
+    applyDraft(next, tags);
+  }
+  function updateBlock(
+    id: string,
+    changes: Partial<BlogBlock>,
+    group?: string,
+  ) {
+    update(
+      {
+        ...draftRef.current,
+        blocks: draftRef.current.blocks.map((b) =>
+          b.id === id ? { ...b, ...changes } : b,
+        ),
+      },
+      group,
+    );
+  }
+  function restoreHistory(direction: "undo" | "redo") {
+    if (imageBusyRef.current) return;
+    const current = draftRef.current;
+    const previousTags = tagTextRef.current;
+    const snapshot = history.current[direction]({
+      draft: current,
+      tagText: tagTextRef.current,
     });
+    if (!snapshot) return;
+    setMenu(null);
+    setImageError("");
+    pendingFocus.current = null;
+    applyDraft(snapshot.draft, snapshot.tagText);
+    if (
+      snapshot.draft.title !== current.title ||
+      snapshot.tagText !== previousTags ||
+      snapshot.draft.tags !== current.tags
+    ) {
+      const selector =
+        snapshot.draft.title !== current.title
+          ? ".blog-title-input"
+          : ".blog-tags-input input";
+      requestAnimationFrame(() => {
+        const field = editorRef.current?.querySelector<
+          HTMLInputElement | HTMLTextAreaElement
+        >(selector);
+        field?.focus();
+        field?.setSelectionRange(field.value.length, field.value.length);
+      });
+    } else {
+      const changed = snapshot.draft.blocks.find(
+        (b) => b !== current.blocks.find((old) => old.id === b.id),
+      );
+      const block =
+        changed ??
+        snapshot.draft.blocks.find((b) => b.id === active) ??
+        snapshot.draft.blocks[0];
+      if (block) focusBlock(block.id, block.text.length);
+    }
   }
   const flush = useCallback(async (): Promise<boolean> => {
     if (imageBusyRef.current) return false;
@@ -352,16 +472,55 @@ function PostEditor({
   useEffect(() => {
     const timer = setTimeout(() => void flush(), 800);
     return () => clearTimeout(timer);
-  }, [draft, flush]);
+  }, [draft, flush, imageBusy]);
+
+  useEffect(() => {
+    const closeMenu = (event: PointerEvent) => {
+      if (
+        !(event.target as Element).closest(
+          ".blog-slash-menu, .blog-block-tools, .blog-rich-text",
+        )
+      )
+        setMenu(null);
+    };
+    document.addEventListener("pointerdown", closeMenu);
+    return () => document.removeEventListener("pointerdown", closeMenu);
+  }, []);
+  useEffect(() => {
+    editorRef.current
+      ?.querySelector(".blog-slash-menu .selected")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [menu?.index, menu?.query]);
+  useEffect(() => {
+    if (menu?.source === "block")
+      editorRef.current
+        ?.querySelector<HTMLButtonElement>(".blog-slash-menu [role=menuitem]")
+        ?.focus();
+  }, [menu?.id, menu?.source]);
+
+  function openBlockMenu(id: string) {
+    history.current.closeGroup();
+    setActive(id);
+    setMenu(
+      menu?.id === id ? null : { id, query: "", index: 0, source: "block" },
+    );
+  }
 
   function focusBlock(id: string, position?: number) {
     setActive(id);
+    pendingFocus.current = { id, position: position ?? 0 };
     requestAnimationFrame(() => {
-      const field = editorRef.current?.querySelector<HTMLTextAreaElement>(
-        `[data-block-id="${id}"]`,
-      );
-      field?.focus();
-      if (position !== undefined) field?.setSelectionRange(position, position);
+      if (pendingFocus.current?.id !== id) return;
+      const editor = editors.current.get(id);
+      if (editor) {
+        editor.commands.focus(
+          Math.min((position ?? 0) + 1, editor.state.doc.content.size - 1),
+        );
+        pendingFocus.current = null;
+      } else
+        editorRef.current
+          ?.querySelector<HTMLInputElement>(`[data-row-id="${id}"] input`)
+          ?.focus();
     });
   }
   function insertAfter(id?: string, type: BlogBlock["type"] = "paragraph") {
@@ -380,9 +539,23 @@ function PostEditor({
       return;
     }
     const old = draftRef.current.blocks.find((b) => b.id === id)!;
-    updateBlock(id, { type, text: old.text.startsWith("/") ? "" : old.text });
-    if (type === "divider") insertAfter(id);
-    else focusBlock(id, 0);
+    const clear =
+      (menu?.source !== "block" && old.text.startsWith("/")) ||
+      type === "divider";
+    const changed = {
+      ...old,
+      type,
+      text: clear ? "" : old.text,
+      inline: clear || type === "code" ? undefined : old.inline,
+    };
+    const trailing = type === "divider" ? newBlock() : null;
+    update({
+      ...draftRef.current,
+      blocks: draftRef.current.blocks.flatMap((b) =>
+        b.id === id ? (trailing ? [changed, trailing] : [changed]) : [b],
+      ),
+    });
+    focusBlock(trailing?.id ?? id, 0);
   }
   const filtered = menu
     ? commands.filter((c) =>
@@ -392,15 +565,30 @@ function PostEditor({
       )
     : [];
   function keyDown(
-    event: KeyboardEvent<HTMLTextAreaElement>,
+    event: globalThis.KeyboardEvent,
     block: BlogBlock,
-  ) {
-    if (event.nativeEvent.isComposing) return;
+    from: number,
+    to: number,
+  ): boolean {
+    if (event.isComposing) return false;
+    if (
+      [
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "Home",
+        "End",
+      ].includes(event.key)
+    )
+      history.current.closeGroup();
+    // An explicit key/caret move wins over a pending focus after a block edit.
+    if (pendingFocus.current?.id === block.id) pendingFocus.current = null;
     if (menu?.id === block.id) {
       if (event.key === "Escape") {
         event.preventDefault();
         setMenu(null);
-        return;
+        return true;
       }
       if (
         (event.key === "ArrowDown" || event.key === "ArrowUp") &&
@@ -415,35 +603,43 @@ function PostEditor({
               filtered.length) %
             filtered.length,
         });
-        return;
+        return true;
       }
       if (event.key === "Enter" && filtered.length) {
         event.preventDefault();
         choose(filtered[menu.index % filtered.length].type, block.id);
-        return;
+        return true;
       }
     }
-    const field = event.currentTarget;
     if (event.key === "Enter" && !event.shiftKey && block.type !== "code") {
       event.preventDefault();
       if (!block.text && ["bullet", "number", "check"].includes(block.type)) {
         updateBlock(block.id, { type: "paragraph" });
-        return;
+        return true;
       }
       const next = newBlock(
         ["bullet", "number", "check"].includes(block.type)
           ? block.type
           : "paragraph",
-        block.text.slice(field.selectionEnd),
+        block.text.slice(to),
       );
+      next.inline = sliceInline(block, to);
       const blocks = draftRef.current.blocks.flatMap((b) =>
         b.id === block.id
-          ? [{ ...b, text: b.text.slice(0, field.selectionStart) }, next]
+          ? [
+              {
+                ...b,
+                text: b.text.slice(0, from),
+                inline: sliceInline(b, 0, from),
+              },
+              next,
+            ]
           : [b],
       );
       update({ ...draftRef.current, blocks });
       setMenu(null);
       focusBlock(next.id, 0);
+      return true;
     } else if (
       event.key === "Backspace" &&
       !block.text &&
@@ -458,9 +654,47 @@ function PostEditor({
       });
       setMenu(null);
       focusBlock(previous.id, previous.text.length);
+      return true;
     }
+    if (event.key === "Backspace" && from === 0 && to === 0) {
+      const index = draftRef.current.blocks.findIndex((b) => b.id === block.id);
+      const previous = draftRef.current.blocks[index - 1];
+      if (
+        previous &&
+        !["image", "divider", "code"].includes(previous.type) &&
+        block.type !== "code"
+      ) {
+        event.preventDefault();
+        const inline = [
+          ...(previous.inline ??
+            (previous.text ? [{ text: previous.text }] : [])),
+          ...(block.inline ?? [{ text: block.text }]),
+        ];
+        update({
+          ...draftRef.current,
+          blocks: draftRef.current.blocks
+            .filter((b) => b.id !== block.id)
+            .map((b) =>
+              b.id === previous.id
+                ? {
+                    ...b,
+                    text: previous.text + block.text,
+                    inline: compactInline(inline),
+                  }
+                : b,
+            ),
+        });
+        focusBlock(previous.id, previous.text.length);
+        return true;
+      }
+    }
+    return false;
   }
-  async function addImages(files: File[], target?: string | null) {
+  async function addImages(
+    files: File[],
+    target?: string | null,
+    edge?: "before" | "after",
+  ) {
     if (!files.length || imageBusyRef.current) return;
     imageBusyRef.current = true;
     setImageBusy(true);
@@ -475,11 +709,12 @@ function PostEditor({
       const trailing = newBlock();
       if (index >= 0) {
         const replace =
+          !edge &&
           blocks[index].type !== "image" &&
           blocks[index].type !== "divider" &&
           (!blocks[index].text || blocks[index].text.startsWith("/"));
         blocks.splice(
-          index + (replace ? 0 : 1),
+          index + (replace || edge === "before" ? 0 : 1),
           replace ? 1 : 0,
           ...images,
           trailing,
@@ -509,8 +744,38 @@ function PostEditor({
     update({ ...draftRef.current, blocks });
   }
 
+  function dropPosition(event: React.DragEvent<HTMLElement>) {
+    const row = (event.target as Element).closest<HTMLElement>("[data-row-id]");
+    if (!row) return null;
+    const bounds = row.getBoundingClientRect();
+    return {
+      id: row.dataset.rowId!,
+      edge:
+        event.clientY < bounds.top + bounds.height / 2
+          ? ("before" as const)
+          : ("after" as const),
+    };
+  }
+
   return (
-    <section className="blog-editor">
+    <section
+      className="blog-editor"
+      onKeyDownCapture={(event) => {
+        if (
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          !(event.ctrlKey || event.metaKey) ||
+          (event.target as Element).closest(".blog-link-form")
+        )
+          return;
+        const key = event.key.toLowerCase();
+        if (key === "z" || key === "y") {
+          event.preventDefault();
+          event.stopPropagation();
+          restoreHistory(key === "y" || event.shiftKey ? "redo" : "undo");
+        }
+      }}
+    >
       <div className="blog-actionbar">
         <button
           className="text-button"
@@ -522,6 +787,24 @@ function PostEditor({
           <ArrowLeft size={17} /> Đọc bài viết
         </button>
         <div className="blog-actions">
+          <button
+            className="icon-button"
+            aria-label="Hoàn tác"
+            title="Hoàn tác (Ctrl+Z)"
+            disabled={!history.current.canUndo || imageBusy}
+            onClick={() => restoreHistory("undo")}
+          >
+            <Undo2 size={17} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Làm lại"
+            title="Làm lại (Ctrl+Y)"
+            disabled={!history.current.canRedo || imageBusy}
+            onClick={() => restoreHistory("redo")}
+          >
+            <Redo2 size={17} />
+          </button>
           <span
             className={`blog-save-status ${saveError ? "has-error" : ""}`}
             role="status"
@@ -540,13 +823,6 @@ function PostEditor({
             onClick={() => downloadPost(draftRef.current)}
           >
             <Download size={17} />
-          </button>
-          <button
-            className="button secondary"
-            disabled={imageBusy}
-            onClick={() => void flush()}
-          >
-            Lưu
           </button>
         </div>
       </div>
@@ -574,7 +850,12 @@ function PostEditor({
       <div
         className="blog-paper"
         ref={editorRef}
+        onPointerDown={() => {
+          pendingFocus.current = null;
+          history.current.closeGroup();
+        }}
         onPaste={(event) => {
+          if (event.defaultPrevented) return;
           const files = Array.from(event.clipboardData.files).filter((f) =>
             f.type.startsWith("image/"),
           );
@@ -584,25 +865,48 @@ function PostEditor({
           }
         }}
         onDragOver={(event) => {
-          if (event.dataTransfer.types.includes("Files"))
+          if (event.dataTransfer.types.includes("Files") || dragging.current) {
             event.preventDefault();
+            event.dataTransfer.dropEffect = dragging.current ? "move" : "copy";
+            setDropTarget(dropPosition(event));
+          }
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            setDropTarget(null);
         }}
         onDrop={(event) => {
+          const target = dropPosition(event);
+          setDropTarget(null);
+          if (dragging.current) {
+            event.preventDefault();
+            if (target)
+              update({
+                ...draftRef.current,
+                blocks: reorderBlocks(
+                  draftRef.current.blocks,
+                  dragging.current,
+                  target.id,
+                  target.edge,
+                ),
+              });
+            dragging.current = null;
+            setDragged(null);
+            return;
+          }
           if (!event.dataTransfer.files.length) return;
           event.preventDefault();
-          void addImages(Array.from(event.dataTransfer.files), active);
+          void addImages(
+            Array.from(event.dataTransfer.files),
+            target?.id,
+            target?.edge,
+          );
         }}
       >
         <div className="eyebrow">GHI CHÉP CỦA BẠN</div>
-        <input
-          className="blog-title-input"
-          aria-label="Tiêu đề bài viết"
-          placeholder="Chưa đặt tiêu đề"
+        <BlogTitle
           value={draft.title}
-          maxLength={200}
-          onChange={(event) =>
-            update({ ...draftRef.current, title: event.target.value })
-          }
+          onChange={(title) => update({ ...draftRef.current, title }, "title")}
         />
         <label className="blog-tags-input">
           <span>TAG</span>
@@ -612,24 +916,27 @@ function PostEditor({
             value={tagText}
             maxLength={820}
             onChange={(event) => {
-              setTagText(event.target.value);
-              update({
-                ...draftRef.current,
-                tags: [
-                  ...new Set(
-                    event.target.value
-                      .split(",")
-                      .map((t) => t.trim())
-                      .filter(Boolean),
-                  ),
-                ],
-              });
+              update(
+                {
+                  ...draftRef.current,
+                  tags: [
+                    ...new Set(
+                      event.target.value
+                        .split(",")
+                        .map((t) => t.trim())
+                        .filter(Boolean),
+                    ),
+                  ],
+                },
+                "tags",
+                event.target.value,
+              );
             }}
           />
         </label>
         <div className="blog-writing-hint">
-          Gõ <kbd>/</kbd> để chèn nội dung · Enter tạo khối mới · Shift + Enter
-          xuống dòng
+          Bôi đen để định dạng · Gõ <kbd>/</kbd> để chèn · Kéo{" "}
+          <GripVertical size={13} /> để sắp xếp
         </div>
         <input
           hidden
@@ -658,57 +965,106 @@ function PostEditor({
         {draft.blocks.map((block, index) => (
           <div
             key={block.id}
-            className={`blog-edit-block ${active === block.id ? "is-active" : ""}`}
+            data-row-id={block.id}
+            className={`blog-edit-block ${active === block.id ? "is-active" : ""} ${dragged === block.id ? "is-dragging" : ""} ${dropTarget?.id === block.id ? `drop-${dropTarget.edge}` : ""}`}
           >
             <div className="blog-block-tools">
               <button
+                className="blog-drag-handle"
+                draggable
+                title="Bấm để chọn định dạng · Kéo để sắp xếp"
+                aria-label={`Định dạng khối ${index + 1}`}
+                aria-haspopup="menu"
+                aria-expanded={menu?.id === block.id}
+                aria-controls={
+                  menu?.id === block.id
+                    ? `blog-block-menu-${block.id}`
+                    : undefined
+                }
+                onClick={() => {
+                  if (Date.now() - dragEndedAt.current > 250)
+                    openBlockMenu(block.id);
+                }}
+                onDragStart={(event) => {
+                  dragging.current = block.id;
+                  setDragged(block.id);
+                  setMenu(null);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    "application/x-refsite-block",
+                    block.id,
+                  );
+                  const row =
+                    event.currentTarget.closest<HTMLElement>(
+                      ".blog-edit-block",
+                    );
+                  if (row) event.dataTransfer.setDragImage(row, 20, 10);
+                }}
+                onDragEnd={() => {
+                  dragEndedAt.current = Date.now();
+                  dragging.current = null;
+                  setDragged(null);
+                  setDropTarget(null);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    event.altKey &&
+                    ["ArrowUp", "ArrowDown"].includes(event.key)
+                  ) {
+                    event.preventDefault();
+                    moveBlock(block.id, event.key === "ArrowUp" ? -1 : 1);
+                  }
+                }}
+              >
+                <GripVertical size={16} />
+              </button>
+              <button
                 title="Đổi loại nội dung"
                 aria-label={`Đổi loại khối ${index + 1}`}
-                onClick={() => {
-                  setActive(block.id);
-                  setMenu(
-                    menu?.id === block.id
-                      ? null
-                      : { id: block.id, query: "", index: 0 },
-                  );
-                }}
+                onClick={() => openBlockMenu(block.id)}
               >
                 <Plus size={15} />
               </button>
-              <button
-                title="Di chuyển lên"
-                aria-label={`Di chuyển khối ${index + 1} lên`}
-                disabled={index === 0}
-                onClick={() => moveBlock(block.id, -1)}
+              <div
+                className="blog-block-more"
+                role="group"
+                aria-label={`Thao tác khối ${index + 1}`}
               >
-                <ArrowUp size={13} />
-              </button>
-              <button
-                title="Di chuyển xuống"
-                aria-label={`Di chuyển khối ${index + 1} xuống`}
-                disabled={index === draft.blocks.length - 1}
-                onClick={() => moveBlock(block.id, 1)}
-              >
-                <ArrowDown size={13} />
-              </button>
-              <button
-                title="Xoá khối"
-                aria-label={`Xoá khối ${index + 1}`}
-                onClick={() => {
-                  update({
-                    ...draftRef.current,
-                    blocks:
-                      draft.blocks.length === 1
-                        ? [newBlock()]
-                        : draftRef.current.blocks.filter(
-                            (b) => b.id !== block.id,
-                          ),
-                  });
-                  setMenu(null);
-                }}
-              >
-                <X size={13} />
-              </button>
+                <button
+                  title="Di chuyển lên"
+                  aria-label={`Di chuyển khối ${index + 1} lên`}
+                  disabled={index === 0}
+                  onClick={() => moveBlock(block.id, -1)}
+                >
+                  <ArrowUp size={13} />
+                </button>
+                <button
+                  title="Di chuyển xuống"
+                  aria-label={`Di chuyển khối ${index + 1} xuống`}
+                  disabled={index === draft.blocks.length - 1}
+                  onClick={() => moveBlock(block.id, 1)}
+                >
+                  <ArrowDown size={13} />
+                </button>
+                <button
+                  title="Xoá khối"
+                  aria-label={`Xoá khối ${index + 1}`}
+                  onClick={() => {
+                    update({
+                      ...draftRef.current,
+                      blocks:
+                        draft.blocks.length === 1
+                          ? [newBlock()]
+                          : draftRef.current.blocks.filter(
+                              (b) => b.id !== block.id,
+                            ),
+                    });
+                    setMenu(null);
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              </div>
             </div>
             <div className="blog-block-content">
               {block.type === "image" ? (
@@ -716,6 +1072,7 @@ function PostEditor({
                   <img
                     src={block.src}
                     alt={block.text || "Ảnh trong bài viết"}
+                    draggable={false}
                   />
                   <input
                     aria-label="Chú thích ảnh"
@@ -724,7 +1081,11 @@ function PostEditor({
                     maxLength={1000}
                     onFocus={() => setActive(block.id)}
                     onChange={(event) =>
-                      updateBlock(block.id, { text: event.target.value })
+                      updateBlock(
+                        block.id,
+                        { text: event.target.value },
+                        `caption:${block.id}`,
+                      )
                     }
                   />
                 </figure>
@@ -752,32 +1113,104 @@ function PostEditor({
                       }
                     />
                   )}
-                  <BlockText
+                  <RichBlockText
+                    key={block.type === "code" ? "code" : "rich"}
                     block={block}
+                    label={
+                      commands.find((c) => c.type === block.type)?.label ??
+                      "Văn bản"
+                    }
+                    placeholder={
+                      block.type === "paragraph"
+                        ? "Viết điều bạn muốn nhớ, hoặc gõ /…"
+                        : (commands.find((c) => c.type === block.type)?.hint ??
+                          "")
+                    }
+                    onReady={(editor) => {
+                      if (editor) {
+                        editors.current.set(block.id, editor);
+                        if (pendingFocus.current?.id === block.id) {
+                          editor.commands.focus(
+                            Math.min(
+                              pendingFocus.current.position + 1,
+                              editor.state.doc.content.size - 1,
+                            ),
+                          );
+                          pendingFocus.current = null;
+                        }
+                      } else editors.current.delete(block.id);
+                    }}
+                    onImages={(files) => void addImages(files, block.id)}
                     onFocus={() => {
                       setActive(block.id);
                       if (menu?.id !== block.id) setMenu(null);
                     }}
-                    onChange={(text) => {
-                      updateBlock(block.id, { text });
+                    onChange={(value) => {
+                      if (pendingFocus.current?.id === block.id)
+                        pendingFocus.current = null;
+                      updateBlock(
+                        block.id,
+                        value,
+                        value.text !== block.text
+                          ? `text:${block.id}`
+                          : undefined,
+                      );
+                      const text = value.text;
                       setMenu(
-                        text.startsWith("/") && !text.includes("\n")
+                        block.type !== "code" &&
+                          text.startsWith("/") &&
+                          !text.includes("\n")
                           ? { id: block.id, query: text.slice(1), index: 0 }
                           : null,
                       );
                     }}
-                    onKeyDown={(event) => keyDown(event, block)}
+                    onKeyDown={(event, from, to) =>
+                      keyDown(event, block, from, to)
+                    }
                   />
                 </div>
               )}
               {menu?.id === block.id && (
                 <div
                   className="blog-slash-menu"
+                  id={`blog-block-menu-${block.id}`}
                   role="menu"
                   aria-label="Chèn nội dung"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setMenu(null);
+                      editorRef.current
+                        ?.querySelector<HTMLButtonElement>(
+                          `[data-row-id="${block.id}"] .blog-drag-handle`,
+                        )
+                        ?.focus();
+                    } else if (
+                      ["ArrowDown", "ArrowUp", "Home", "End"].includes(
+                        event.key,
+                      ) &&
+                      filtered.length
+                    ) {
+                      event.preventDefault();
+                      const index =
+                        event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? filtered.length - 1
+                            : (menu.index +
+                                (event.key === "ArrowDown" ? 1 : -1) +
+                                filtered.length) %
+                              filtered.length;
+                      event.currentTarget
+                        .querySelectorAll<HTMLButtonElement>("[role=menuitem]")
+                        [index]?.focus();
+                    }
+                  }}
                 >
                   <div className="blog-menu-heading">
-                    CHÈN NỘI DUNG{" "}
+                    {menu.source === "block"
+                      ? "ĐỔI ĐỊNH DẠNG"
+                      : "CHÈN NỘI DUNG"}{" "}
                     <button
                       aria-label="Đóng menu nội dung"
                       onClick={() => setMenu(null)}
@@ -791,6 +1224,11 @@ function PostEditor({
                       role="menuitem"
                       key={command.type}
                       className={menu.index === commandIndex ? "selected" : ""}
+                      onFocus={() =>
+                        setMenu((current) =>
+                          current ? { ...current, index: commandIndex } : null,
+                        )
+                      }
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => choose(command.type, block.id)}
                     >

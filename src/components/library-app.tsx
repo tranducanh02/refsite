@@ -426,7 +426,7 @@ export function LibraryApp() {
           <BookOpen size={19} />
         </span>
         <div>
-          Blog<small>Ghi chép kiến thức của bạn</small>
+          Blog
         </div>
         <span className="private-badge">
           {library.posts.filter((p) => !p.deletedAt).length}

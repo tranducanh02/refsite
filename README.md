@@ -44,12 +44,16 @@ Truy cập đa thiết bị qua Internet cần kết nối Supabase **và** depl
 Mục **Blog** thay cho My workspace trên sidebar. Bài viết dùng cùng nơi lưu và quyền truy cập của thư viện; không có trang công khai hay thao tác xuất bản. Với Supabase, bài viết và ảnh nằm trong document JSONB của tài khoản, được bảo vệ bằng RLS hiện có. Không cần chạy thêm SQL. Chế độ local vẫn dùng quyền truy cập của server local như mô tả ở trên.
 
 - Viết, đọc, sửa bài; tìm theo tiêu đề, nội dung, tag (hỗ trợ tiếng Việt không dấu); lọc tag và sắp xếp theo lần cập nhật gần nhất.
+- Tiêu đề trong trình sửa tự xuống dòng và tăng chiều cao theo nội dung, kể cả khi đổi kích thước cửa sổ.
+- Ctrl/Cmd+Z hoàn tác; Ctrl+Y hoặc Ctrl/Cmd+Shift+Z làm lại. Lịch sử chung cho tiêu đề, tag, văn bản, định dạng, ảnh và thao tác khối; có thêm nút Hoàn tác/Làm lại. Giữ tối đa 100 bước trong phiên chỉnh sửa, gom các lần gõ liên tiếp; tự lưu không xóa lịch sử. Rời trình sửa hoặc tải lại trang bắt đầu một lịch sử mới.
 - Gõ `/` trong một khối để chọn đoạn văn, H1–H4, danh sách, checklist, trích dẫn, code, đường phân cách hoặc ảnh. Dùng mũi tên và Enter để chọn, Esc đóng menu. Nút `+` cạnh khối cũng mở menu.
-- Enter tạo khối tiếp theo; Shift+Enter xuống dòng trong khối. Khối code giữ Enter để viết nhiều dòng. Có nút chuyển khối lên/xuống và xoá khối.
-- Chèn ảnh bằng chọn file, kéo thả hoặc dán từ clipboard; thêm chú thích ngay dưới ảnh. Ảnh được nén thành WebP, cạnh dài tối đa 1.600 px; GIF được lưu thành ảnh tĩnh. Ảnh gốc tối đa 15 MB, ảnh sau nén tối đa 2 MB, mỗi bài tối đa 6 MB.
+- Bấm tay nắm chấm đầu dòng để mở cùng menu định dạng, giữ nguyên chữ và định dạng trong dòng khi đổi giữa đoạn văn/H1–H4/danh sách/trích dẫn. Có thể dùng phím mũi tên/Enter/Esc trong popup; kéo tay nắm vẫn sắp xếp khối như trước.
+- Bôi đen văn bản trong khối để mở thanh định dạng: đậm, nghiêng, gạch chân, gạch ngang, mã trong dòng, tô sáng và liên kết. Hỗ trợ Ctrl/Cmd+B, I, U; liên kết chỉ nhận HTTP, HTTPS hoặc mailto. Định dạng giữ nguyên khi tự lưu, mở lại, đọc bài và sao lưu JSON. Bài cũ không cần chuyển đổi dữ liệu.
+- Enter tạo khối tiếp theo và giữ định dạng ở hai phía con trỏ; Shift+Enter xuống dòng trong khối. Backspace ở đầu đoạn nối với đoạn trước. Khối code giữ Enter để viết nhiều dòng. Kéo tay nắm cạnh khối tới vạch chỉ vị trí để sắp xếp; có nút lên/xuống và Alt+↑/↓ khi focus tay nắm, phù hợp cả bàn phím và điện thoại.
+- Chèn ảnh bằng chọn file, kéo thả đúng vị trí trước/sau khối hoặc dán từ clipboard tại khối đang viết; thêm chú thích ngay dưới ảnh. Ảnh được nén thành WebP, cạnh dài tối đa 1.600 px; GIF được lưu thành ảnh tĩnh. Ảnh gốc tối đa 15 MB, ảnh sau nén tối đa 2 MB, mỗi bài tối đa 6 MB.
 - Tự lưu sau 800 ms ngừng nhập; có trạng thái lưu và Ctrl/Cmd+S. Chuyển mục hoặc rời trình sửa sẽ chờ lưu; nếu lỗi thì giữ bản đang sửa. Đóng/tải lại tab khi còn thay đổi sẽ có cảnh báo trình duyệt. Đây chưa phải trình sửa offline: hãy xuất Markdown nếu mất kết nối kéo dài.
 - Xoá đưa bài vào **Thùng rác**, có thể khôi phục; chưa có xoá vĩnh viễn. Mỗi bài có phiên bản riêng để ngăn một bản sửa cũ ghi đè thay đổi trên thiết bị khác.
-- Chế độ đọc có mục lục khi có ít nhất hai heading. Nút tải xuống xuất Markdown kèm ảnh nhúng. Chưa hỗ trợ định dạng đậm/nghiêng và liên kết trong dòng.
+- Chế độ đọc có mục lục khi có ít nhất hai heading. Nút tải xuống xuất Markdown kèm định dạng và ảnh nhúng; gạch chân/tô sáng dùng thẻ HTML `u`/`mark`, cần trình đọc Markdown cho phép HTML để hiển thị hai kiểu này.
 - Xuất/nhập thư viện JSON bao gồm bài viết, ảnh và thùng rác. Nhập gộp theo ID bài viết, giữ bản đang có; file thư viện cũ không có Blog vẫn dùng được. Giới hạn nhập JSON hiện tại là 10 MB; bản sao nhiều ảnh nên lưu thêm Markdown từng bài.
 
 Kiểm thử API trên một bản build và thư mục dữ liệu tạm, không dùng cấu hình tài khoản thật:
@@ -57,6 +61,15 @@ Kiểm thử API trên một bản build và thư mục dữ liệu tạm, khôn
 ```powershell
 npx tsx tests/blog-api.integration.ts
 ```
+
+Kiểm thử thêm thao tác trên Chrome headless (cần Chrome trên máy), bao gồm định dạng, tách/nối đoạn, menu `/`, kéo thả, ba cách chèn ảnh, tải lại bài, lưu thất bại/thử lại và bố cục điện thoại:
+
+```powershell
+$env:REFSITE_TEST_BROWSER='1'
+npx tsx tests/blog-api.integration.ts
+```
+
+Ảnh chụp kiểm thử được ghi vào `test-results/blog-editor-*.png`. Bộ kiểm thử chạy với bản sao ứng dụng và dữ liệu tạm, không dùng `.env.local` hay thư viện thật.
 
 ## Kết nối Supabase sau khi chạy thử
 
